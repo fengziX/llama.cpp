@@ -1,0 +1,75 @@
+name: build-bonsai-win-cuda
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [prism]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: windows-x64-cuda-sm120
+    runs-on: windows-2022
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install CUDA 13.4 (x64)
+        uses: ./.github/actions/windows-setup-cuda
+        with:
+          cuda_version: '13.4'
+          cuda_arch: x64
+
+      - name: Install Ninja
+        run: choco install ninja -y --no-progress
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          nvcc --version
+          Write-Host "CUDA_PATH=$env:CUDA_PATH"
+
+      - name: Configure
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake -S . -B build -G "Ninja Multi-Config" ^
+            -DGGML_CUDA=ON ^
+            -DGGML_NATIVE=OFF ^
+            -DGGML_BACKEND_DL=OFF ^
+            -DLLAMA_CURL=OFF ^
+            -DLLAMA_BUILD_BORINGSSL=ON ^
+            -DCMAKE_CUDA_ARCHITECTURES=120 ^
+            -DGGML_CUDA_CCCL_VERSION=v3.4.3
+
+      - name: Build
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          cmake --build build --config Release -j %NUMBER_OF_PROCESSORS%
+
+      - name: Copy CUDA runtime dlls
+        shell: pwsh
+        run: |
+          $dst = "build\bin\Release"
+          robocopy "$env:CUDA_PATH\bin" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll /NJH /NJS /NDL /NP
+          robocopy "$env:CUDA_PATH\bin\x64" $dst cudart64_*.dll cublas64_*.dll cublasLt64_*.dll /NJH /NJS /NDL /NP
+          exit 0
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          & "build\bin\Release\llama-cli.exe" --version
+          & "build\bin\Release\llama-server.exe" --version
+          Get-ChildItem "build\bin\Release" | Measure-Object -Property Length -Sum | ForEach-Object { "total bytes: $($_.Sum)" }
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-bonsai-win-cuda
+          path: build/bin/Release/**
+          if-no-files-found: error
+          retention-days: 7
