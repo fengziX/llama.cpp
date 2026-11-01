@@ -2,8 +2,6 @@ name: build-bonsai-win-cuda
 
 on:
   workflow_dispatch:
-  push:
-    branches: [prism]
 
 permissions:
   contents: read
